@@ -9,6 +9,7 @@ import {
   Dimensions,
   ImageBackground,
   ImageSourcePropType,
+  Alert,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -18,6 +19,7 @@ import Animated, {
   withRepeat,
   interpolate,
 } from 'react-native-reanimated';
+import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import {
@@ -30,7 +32,21 @@ import {
   Play,
   Coffee,
   Music,
+  MessageCircle,
+  Brain,
+  X,
+  Send,
 } from 'lucide-react-native';
+import { useConversationStore } from '../../store/conversationStore';
+import { WhisperService } from '../../services/whisperService';
+import { GPTService } from '../../services/gptService';
+import { ElevenLabsService } from '../../services/elevenLabsService';
+import { HumeService } from '../../services/humeService';
+import { FirebaseService } from '../../services/firebaseService';
+import ChatInterface from '../../components/ChatInterface';
+import EmotionAnalyzer from '../../components/EmotionAnalyzer';
+import { scenarios } from '../../data/scenarios';
+import { ConversationMessage, EmotionData } from '../../types/conversation';
 
 // --- FIX: Corrected import paths to navigate from 'app/(tabs)' to the root 'assets/images' folder ---
 import alex from '../../assets/images/alex.jpg';
@@ -128,16 +144,41 @@ const scenarios: ScenarioType[] = [
 export default function PracticeScreen() {
   const [selectedMode, setSelectedMode] = useState('social');
   const [showAvatar, setShowAvatar] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [emotionLevel, setEmotionLevel] = useState(0.6);
   const [currentScenario, setCurrentScenario] = useState<ScenarioType | null>(null);
-  const [sessionProgress, setSessionProgress] = useState(0);
-  const [conversationMoves, setConversationMoves] = useState(0);
-  const [achievedObjectives, setAchievedObjectives] = useState<string[]>([]);
+  const [showChatInterface, setShowChatInterface] = useState(false);
+  const [showEmotionAnalyzer, setShowEmotionAnalyzer] = useState(false);
+  const [currentRecording, setCurrentRecording] = useState<Audio.Recording | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Services
+  const whisperService = WhisperService.getInstance();
+  const gptService = GPTService.getInstance();
+  const elevenLabsService = ElevenLabsService.getInstance();
+  const humeService = HumeService.getInstance();
+  const firebaseService = FirebaseService.getInstance();
+
+  // Store
+  const {
+    isActive,
+    messages,
+    emotions,
+    currentEmotion,
+    emotionIntensity,
+    isRecording,
+    isProcessing,
+    currentScore,
+    startSession,
+    endSession,
+    addMessage,
+    addEmotion,
+    updateEmotionState,
+    setRecording,
+    setProcessing,
+    updateScore,
+  } = useConversationStore();
 
   const pulseAnimation = useSharedValue(0);
   const avatarScale = useSharedValue(0);
-  const emotionAnimation = useSharedValue(0);
 
   useEffect(() => {
     pulseAnimation.value = withRepeat(
@@ -145,24 +186,29 @@ export default function PracticeScreen() {
       -1,
       true
     );
-    emotionAnimation.value = withTiming(emotionLevel, { duration: 500 });
-  }, [emotionLevel]);
+  }, []);
 
   useEffect(() => {
     if (showAvatar) {
       avatarScale.value = withSpring(1, { damping: 15, stiffness: 150 });
+      initializeServices();
     } else {
       avatarScale.value = withSpring(0);
+      cleanupServices();
     }
   }, [showAvatar]);
+
+  useEffect(() => {
+    // Update emotion state when new emotions are detected
+    if (emotions.length > 0) {
+      const latestEmotion = emotions[emotions.length - 1];
+      updateEmotionState(latestEmotion.emotion, latestEmotion.intensity);
+    }
+  }, [emotions]);
 
   const avatarStyle = useAnimatedStyle(() => ({
     transform: [{ scale: avatarScale.value }],
     opacity: avatarScale.value,
-  }));
-
-  const emotionStyle = useAnimatedStyle(() => ({
-    width: `${interpolate(emotionAnimation.value, [0, 1], [10, 100])}%`,
   }));
 
   const recordingStyle = useAnimatedStyle(() => ({
@@ -177,36 +223,242 @@ export default function PracticeScreen() {
     ],
   }));
 
-  const startScenario = (scenario: ScenarioType) => {
-    setCurrentScenario(scenario);
-    setShowAvatar(true);
-    setSessionProgress(0);
-    setConversationMoves(0);
-    setAchievedObjectives([]);
-    // Simulate emotion level changes
-    setTimeout(() => setEmotionLevel(0.8), 1000);
-    setTimeout(() => setEmotionLevel(0.4), 3000);
-    setTimeout(() => setEmotionLevel(0.9), 5000);
-  };
-
-  const makeConversationMove = () => {
-    if (conversationMoves < 5) {
-      setConversationMoves(conversationMoves + 1);
-      setSessionProgress((conversationMoves + 1) / 5);
-      
-      // Simulate objective completion
-      if (conversationMoves === 2 && Math.random() > 0.5) {
-        setAchievedObjectives([...achievedObjectives, 'primary']);
-      }
-      if (conversationMoves === 3 && Math.random() > 0.6) {
-        setAchievedObjectives([...achievedObjectives, 'bonus1']);
-      }
+  const initializeServices = async () => {
+    try {
+      // Initialize emotion detection
+      await humeService.startEmotionDetection(handleEmotionDetection);
+      setIsInitialized(true);
+    } catch (error) {
+      console.error('Service initialization error:', error);
+      Alert.alert('Error', 'Failed to initialize AI services. Some features may not work properly.');
     }
   };
 
-  const endSession = () => {
+  const cleanupServices = () => {
+    humeService.stopEmotionDetection();
+    if (currentRecording) {
+      currentRecording.stopAndUnloadAsync();
+      setCurrentRecording(null);
+    }
+    setIsInitialized(false);
+  };
+
+  const handleEmotionDetection = (detectedEmotions: EmotionData[]) => {
+    detectedEmotions.forEach(emotion => {
+      addEmotion(emotion);
+    });
+  };
+
+  const startScenario = async (scenario: ScenarioType) => {
+    setCurrentScenario(scenario);
+    
+    // Find matching scenario script
+    const scenarioScript = Object.values(scenarios).find(s => 
+      s.title.toLowerCase().includes(scenario.title.toLowerCase().split(' ')[0])
+    );
+    
+    if (scenarioScript) {
+      startSession(scenarioScript);
+    }
+    
+    setShowAvatar(true);
+    setShowChatInterface(true);
+    setShowEmotionAnalyzer(true);
+    
+    // Send initial AI message
+    setTimeout(() => {
+      sendInitialMessage(scenario);
+    }, 1000);
+  };
+
+  const sendInitialMessage = async (scenario: ScenarioType) => {
+    const initialMessages = {
+      'Coffee Shop Approach': "Hi there! I couldn't help but notice you're reading. Mind if I ask what book that is?",
+      'House Party Group Join': "Hey everyone! Mind if I join the conversation? I heard you talking about travel.",
+      'Bar Flirtation': "Hi! I hope you don't mind me saying, but you have great taste in music. This song is one of my favorites.",
+    };
+    
+    const content = initialMessages[scenario.title as keyof typeof initialMessages] || 
+      "Hi there! How's your day going?";
+    
+    const aiMessage: ConversationMessage = {
+      id: Date.now().toString(),
+      type: 'ai',
+      content,
+      timestamp: Date.now(),
+    };
+    
+    addMessage(aiMessage);
+    
+    // Generate and play audio
+    try {
+      const audioData = await elevenLabsService.textToSpeech(content);
+      aiMessage.audioUrl = audioData;
+      await elevenLabsService.playAudio(audioData);
+    } catch (error) {
+      console.error('TTS error:', error);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      if (isRecording) {
+        await stopRecording();
+        return;
+      }
+      
+      setRecording(true);
+      const recording = await whisperService.startRecording();
+      setCurrentRecording(recording);
+    } catch (error) {
+      console.error('Recording start error:', error);
+      Alert.alert('Error', 'Failed to start recording. Please check microphone permissions.');
+      setRecording(false);
+    }
+  };
+
+  const stopRecording = async () => {
+    try {
+      if (!currentRecording) return;
+      
+      setRecording(false);
+      setProcessing(true);
+      
+      const audioUri = await whisperService.stopRecording(currentRecording);
+      setCurrentRecording(null);
+      
+      // Transcribe audio
+      const transcription = await whisperService.transcribeAudio(audioUri);
+      
+      if (transcription.trim()) {
+        // Add user message
+        const userMessage: ConversationMessage = {
+          id: Date.now().toString(),
+          type: 'user',
+          content: transcription,
+          timestamp: Date.now(),
+          emotions: emotions.slice(-3), // Include recent emotions
+        };
+        
+        addMessage(userMessage);
+        
+        // Generate AI response
+        await generateAIResponse(transcription);
+      }
+      
+      setProcessing(false);
+    } catch (error) {
+      console.error('Recording stop error:', error);
+      Alert.alert('Error', 'Failed to process recording.');
+      setProcessing(false);
+    }
+  };
+
+  const generateAIResponse = async (userInput: string) => {
+    try {
+      const scenarioScript = Object.values(scenarios).find(s => 
+        s.title.toLowerCase().includes(currentScenario?.title.toLowerCase().split(' ')[0] || '')
+      );
+      
+      if (!scenarioScript) return;
+      
+      const response = await gptService.generateResponse(
+        messages,
+        scenarioScript,
+        currentEmotion || undefined,
+        emotionIntensity
+      );
+      
+      const aiMessage: ConversationMessage = {
+        id: Date.now().toString(),
+        type: 'ai',
+        content: response,
+        timestamp: Date.now(),
+      };
+      
+      addMessage(aiMessage);
+      
+      // Generate and play audio response
+      try {
+        const audioData = await elevenLabsService.textToSpeech(response, currentEmotion || undefined);
+        aiMessage.audioUrl = audioData;
+        await elevenLabsService.playAudio(audioData);
+      } catch (error) {
+        console.error('TTS error:', error);
+      }
+      
+      // Update score based on conversation quality
+      updateConversationScore();
+    } catch (error) {
+      console.error('AI response generation error:', error);
+    }
+  };
+
+  const updateConversationScore = () => {
+    let score = currentScore;
+    
+    // Score based on emotion appropriateness
+    if (currentEmotion) {
+      const positiveEmotions = ['joy', 'happiness', 'confidence', 'calm'];
+      const negativeEmotions = ['anxiety', 'nervousness', 'anger', 'sadness'];
+      
+      if (positiveEmotions.includes(currentEmotion)) {
+        score += Math.round(emotionIntensity * 10);
+      } else if (negativeEmotions.includes(currentEmotion)) {
+        score -= Math.round(emotionIntensity * 5);
+      }
+    }
+    
+    // Score based on conversation length and engagement
+    const userMessages = messages.filter(m => m.type === 'user').length;
+    score += userMessages * 5;
+    
+    // Ensure score stays within bounds
+    score = Math.max(0, Math.min(100, score));
+    updateScore(score);
+  };
+
+  const handleEndSession = async () => {
+    try {
+      const sessionData = endSession();
+      if (sessionData) {
+        // Save session to Firebase
+        await firebaseService.saveSession(sessionData);
+        
+        // Generate feedback
+        const feedback = await gptService.generateScenarioFeedback(
+          messages,
+          emotions,
+          currentScore
+        );
+        
+        Alert.alert(
+          'Session Complete!',
+          `Score: ${currentScore}/100\n\n${feedback}`,
+          [{ text: 'OK', onPress: () => closeSession() }]
+        );
+      } else {
+        closeSession();
+      }
+    } catch (error) {
+      console.error('End session error:', error);
+      closeSession();
+    }
+  };
+
+  const closeSession = () => {
     setShowAvatar(false);
+    setShowChatInterface(false);
+    setShowEmotionAnalyzer(false);
     setCurrentScenario(null);
+  };
+
+  const playAudioMessage = async (audioUrl: string) => {
+    try {
+      await elevenLabsService.playAudio(audioUrl);
+    } catch (error) {
+      console.error('Audio playback error:', error);
+    }
   };
 
   return (
@@ -327,11 +579,50 @@ export default function PracticeScreen() {
           }
           style={styles.modalContainer}>
           
+          {/* Chat Interface */}
+          <ChatInterface
+            messages={messages}
+            isVisible={showChatInterface}
+            onPlayAudio={playAudioMessage}
+          />
+
+          {/* Emotion Analyzer */}
+          <EmotionAnalyzer
+            emotions={emotions}
+            currentEmotion={currentEmotion}
+            emotionIntensity={emotionIntensity}
+            isVisible={showEmotionAnalyzer}
+          />
+
+          {/* Toggle Buttons */}
+          <View style={styles.toggleButtons}>
+            <TouchableOpacity
+              style={[styles.toggleButton, showChatInterface && styles.toggleButtonActive]}
+              onPress={() => setShowChatInterface(!showChatInterface)}>
+              <MessageCircle size={20} color="#FFF" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.toggleButton, showEmotionAnalyzer && styles.toggleButtonActive]}
+              onPress={() => setShowEmotionAnalyzer(!showEmotionAnalyzer)}>
+              <Brain size={20} color="#FFF" />
+            </TouchableOpacity>
+          </View>
+
           {/* Scenario Info */}
           {currentScenario && (
             <View style={styles.scenarioInfo}>
               <Text style={styles.scenarioInfoTitle}>{currentScenario.title}</Text>
               <Text style={styles.scenarioInfoDescription}>{currentScenario.description}</Text>
+              <View style={styles.sessionStats}>
+                <Text style={styles.sessionStat}>Score: {currentScore}/100</Text>
+                <Text style={styles.sessionStat}>Messages: {messages.length}</Text>
+                {currentEmotion && (
+                  <Text style={styles.sessionStat}>
+                    Emotion: {currentEmotion} ({Math.round(emotionIntensity * 100)}%)
+                  </Text>
+                )}
+              </View>
             </View>
           )}
 
@@ -355,70 +646,19 @@ export default function PracticeScreen() {
               </ImageBackground>
             </View>
 
-            {/* Session Progress */}
-            <View style={styles.sessionProgress}>
-              <Text style={styles.progressLabel}>Session Progress</Text>
-              <View style={styles.progressBarContainer}>
-                <View style={styles.progressBarBg}>
-                  <View style={[styles.progressBarFill, { width: `${sessionProgress * 100}%` }]} />
-                </View>
-                <Text style={styles.progressText}>{conversationMoves}/5 moves</Text>
-              </View>
-            </View>
-
-            {/* Objectives Tracker */}
-            {currentScenario && (
-              <View style={styles.objectivesTracker}>
-                <Text style={styles.objectivesTitle}>Objectives</Text>
-                <View style={styles.objectiveItem}>
-                  <View style={[
-                    styles.objectiveIndicator,
-                    achievedObjectives.includes('primary') && styles.objectiveCompleted
-                  ]} />
-                  <Text style={styles.objectiveText}>{currentScenario.objectives.primary}</Text>
-                </View>
-                {currentScenario.objectives.bonus.map((bonus: string, index: number) => (
-                  <View key={index} style={styles.objectiveItem}>
-                    <View style={[
-                      styles.objectiveIndicator,
-                      achievedObjectives.includes(`bonus${index + 1}`) && styles.objectiveCompleted
-                    ]} />
-                    <Text style={styles.objectiveText}>Bonus: {bonus}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            {/* Emotion Meter */}
-            <View style={styles.emotionMeter}>
-              <Text style={styles.emotionLabel}>Emotion Level</Text>
-              <View style={styles.emotionBar}>
-                <Animated.View style={[styles.emotionFill, emotionStyle]} />
-              </View>
-              <Text style={styles.emotionValue}>
-                {Math.round(emotionLevel * 100)}%
-              </Text>
-            </View>
-
             {/* Controls */}
             <View style={styles.controls}>
-              <TouchableOpacity
-                style={styles.conversationButton}
-                onPress={makeConversationMove}
-                disabled={conversationMoves >= 5}>
-                <Text style={styles.conversationButtonText}>
-                  {conversationMoves >= 5 ? 'Complete' : 'Make Move'}
-                </Text>
-              </TouchableOpacity>
-
               <Animated.View style={recordingStyle}>
                 <TouchableOpacity
                   style={[
                     styles.controlButton,
-                    isRecording && styles.controlButtonActive,
+                    (isRecording || isProcessing) && styles.controlButtonActive,
                   ]}
-                  onPress={() => setIsRecording(!isRecording)}>
-                  {isRecording ? (
+                  onPress={startRecording}
+                  disabled={isProcessing}>
+                  {isProcessing ? (
+                    <Text style={styles.processingText}>...</Text>
+                  ) : isRecording ? (
                     <MicOff size={24} color="#FFF" />
                   ) : (
                     <Mic size={24} color="#FFF" />
@@ -426,13 +666,16 @@ export default function PracticeScreen() {
                 </TouchableOpacity>
               </Animated.View>
 
-              <TouchableOpacity style={styles.controlButton}>
-                <Camera size={60} color="#FFF" />
+              <TouchableOpacity 
+                style={styles.controlButton}
+                onPress={handleEndSession}>
+                <Text style={styles.endSessionText}>End</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.exitButton}
-                onPress={endSession}>
+                onPress={closeSession}>
+                <X size={20} color="#FFF" />
                 <Text style={styles.exitText}>Exit</Text>
               </TouchableOpacity>
             </View>
@@ -562,6 +805,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 5,
   },
+  toggleButtons: {
+    position: 'absolute',
+    top: 60,
+    left: 20,
+    flexDirection: 'row',
+    gap: 12,
+    zIndex: 1001,
+  },
+  toggleButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  toggleButtonActive: {
+    backgroundColor: '#8B5CF6',
+  },
   scenarioInfo: {
     width: '100%',
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
@@ -578,6 +840,18 @@ const styles = StyleSheet.create({
   scenarioInfoDescription: {
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.8)',
+    marginBottom: 12,
+  },
+  sessionStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  sessionStat: {
+    fontSize: 12,
+    color: '#10B981',
+    fontWeight: '600',
   },
   avatarContainer: {
     width: '100%',
@@ -622,119 +896,12 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: -1, height: 1 },
     textShadowRadius: 10,
   },
-  sessionProgress: {
-    width: '90%',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  progressLabel: {
-    fontSize: 14,
-    color: '#FFF',
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  progressBarContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  progressBarBg: {
-    width: '100%',
-    height: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#10B981',
-    borderRadius: 3,
-  },
-  progressText: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontWeight: '600',
-  },
-  objectivesTracker: {
-    width: '90%',
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-  },
-  objectivesTitle: {
-    fontSize: 16,
-    color: '#FFF',
-    fontWeight: '700',
-    marginBottom: 12,
-  },
-  objectiveItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  objectiveIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    marginRight: 12,
-  },
-  objectiveCompleted: {
-    backgroundColor: '#10B981',
-  },
-  objectiveText: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    flex: 1,
-  },
-  emotionMeter: {
-    width: '90%',
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  emotionLabel: {
-    fontSize: 16,
-    color: '#FFF',
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  emotionBar: {
-    width: '100%',
-    height: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  emotionFill: {
-    height: '100%',
-    backgroundColor: '#10B981',
-    borderRadius: 4,
-  },
-  emotionValue: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    fontWeight: '600',
-  },
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     justifyContent: 'center',
     gap: 20,
-  },
-  conversationButton: {
-    backgroundColor: '#8B5CF6',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 20,
-    marginBottom: 10,
-  },
-  conversationButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '600',
   },
   controlButton: {
     width: 60,
@@ -747,11 +914,24 @@ const styles = StyleSheet.create({
   controlButtonActive: {
     backgroundColor: '#EF4444',
   },
+  processingText: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  endSessionText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   exitButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    gap: 8,
   },
   exitText: {
     color: '#FFF',
