@@ -1,4 +1,4 @@
-import { EmotionData } from '../types/conversation';
+import { EmotionData } from '@/types/conversation';
 
 export class HumeService {
   private static instance: HumeService;

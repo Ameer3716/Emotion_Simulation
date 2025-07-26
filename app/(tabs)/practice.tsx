@@ -37,25 +37,24 @@ import {
   X,
   Send,
 } from 'lucide-react-native';
-import { useConversationStore } from '../../store/conversationStore';
-import { WhisperService } from '../../services/whisperService';
-import { GPTService } from '../../services/gptService';
-import { ElevenLabsService } from '../../services/elevenLabsService';
-import { HumeService } from '../../services/humeService';
-import { FirebaseService } from '../../services/firebaseService';
-import ChatInterface from '../../components/ChatInterface';
-import EmotionAnalyzer from '../../components/EmotionAnalyzer';
-import { scenarios } from '../../data/scenarios';
-import { ConversationMessage, EmotionData } from '../../types/conversation';
+import { useConversationStore } from '@/store/conversationStore';
+import { WhisperService } from '@/services/whisperService';
+import { GPTService } from '@/services/gptService';
+import { ElevenLabsService } from '@/services/elevenLabsService';
+import { HumeService } from '@/services/humeService';
+import { FirebaseService } from '@/services/firebaseService';
+import ChatInterface from '@/components/ChatInterface';
+import EmotionAnalyzer from '@/components/EmotionAnalyzer';
+import { scenarios as scenarioScripts } from '@/data/scenarios';
+import { ConversationMessage, EmotionData } from '@/types/conversation';
 
-// --- FIX: Corrected import paths to navigate from 'app/(tabs)' to the root 'assets/images' folder ---
-import alex from '../../assets/images/alex.jpg';
-import sara from '../../assets/images/sara.jpg';
-import amy from '../../assets/images/amy.jpg';
+// Import images using require for better compatibility
+const alex = require('@/assets/images/alex.jpg');
+const sara = require('@/assets/images/sara.jpg');
+const amy = require('@/assets/images/amy.jpg');
 
 const { width } = Dimensions.get('window');
 
-// --- TYPE DEFINITION ADDED FOR BETTER TYPE SAFETY ---
 type ScenarioType = {
   id: number;
   title: string;
@@ -74,7 +73,6 @@ type ScenarioType = {
   failureBehaviors: string[];
 };
 
-// --- SCENARIOS UPDATED WITH CORRECT avatarUrl FORMAT ---
 const scenarios: ScenarioType[] = [
   {
     id: 1,
@@ -85,7 +83,7 @@ const scenarios: ScenarioType[] = [
     background: 'cafe',
     icon: Coffee,
     gradient: ['#8B5CF6', '#3B82F6'],
-    avatarUrl: alex, // This is correct once the import is fixed
+    avatarUrl: alex,
     objectives: {
       primary: 'Start a conversation and exchange 3 messages',
       bonus: [
@@ -106,7 +104,7 @@ const scenarios: ScenarioType[] = [
     background: 'party',
     icon: Music,
     gradient: ['#F59E0B', '#EF4444'],
-    avatarUrl: sara, // This is correct once the import is fixed
+    avatarUrl: sara,
     objectives: {
       primary: 'Successfully join and contribute to group conversation',
       bonus: [
@@ -127,7 +125,7 @@ const scenarios: ScenarioType[] = [
     background: 'date',
     icon: Heart,
     gradient: ['#EC4899', '#8B5CF6'],
-    avatarUrl: amy, // This is correct once the import is fixed
+    avatarUrl: amy,
     objectives: {
       primary: 'Break the ice and have engaging 5-minute conversation',
       bonus: [
@@ -149,13 +147,14 @@ export default function PracticeScreen() {
   const [showEmotionAnalyzer, setShowEmotionAnalyzer] = useState(false);
   const [currentRecording, setCurrentRecording] = useState<Audio.Recording | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [servicesReady, setServicesReady] = useState(false);
 
   // Services
-  const whisperService = WhisperService.getInstance();
-  const gptService = GPTService.getInstance();
-  const elevenLabsService = ElevenLabsService.getInstance();
-  const humeService = HumeService.getInstance();
-  const firebaseService = FirebaseService.getInstance();
+  const [whisperService, setWhisperService] = useState<WhisperService | null>(null);
+  const [gptService, setGptService] = useState<GPTService | null>(null);
+  const [elevenLabsService, setElevenLabsService] = useState<ElevenLabsService | null>(null);
+  const [humeService, setHumeService] = useState<HumeService | null>(null);
+  const [firebaseService, setFirebaseService] = useState<FirebaseService | null>(null);
 
   // Store
   const {
@@ -180,6 +179,25 @@ export default function PracticeScreen() {
   const pulseAnimation = useSharedValue(0);
   const avatarScale = useSharedValue(0);
 
+  // Initialize services on component mount
+  useEffect(() => {
+    const initServices = async () => {
+      try {
+        setWhisperService(WhisperService.getInstance());
+        setGptService(GPTService.getInstance());
+        setElevenLabsService(ElevenLabsService.getInstance());
+        setHumeService(HumeService.getInstance());
+        setFirebaseService(FirebaseService.getInstance());
+        setServicesReady(true);
+      } catch (error) {
+        console.error('Service initialization error:', error);
+        Alert.alert('Error', 'Failed to initialize services. Please restart the app.');
+      }
+    };
+
+    initServices();
+  }, []);
+
   useEffect(() => {
     pulseAnimation.value = withRepeat(
       withTiming(1, { duration: 2000 }),
@@ -191,12 +209,14 @@ export default function PracticeScreen() {
   useEffect(() => {
     if (showAvatar) {
       avatarScale.value = withSpring(1, { damping: 15, stiffness: 150 });
-      initializeServices();
+      if (servicesReady) {
+        initializeServices();
+      }
     } else {
       avatarScale.value = withSpring(0);
       cleanupServices();
     }
-  }, [showAvatar]);
+  }, [showAvatar, servicesReady]);
 
   useEffect(() => {
     // Update emotion state when new emotions are detected
@@ -225,6 +245,7 @@ export default function PracticeScreen() {
 
   const initializeServices = async () => {
     try {
+      if (!humeService) return;
       // Initialize emotion detection
       await humeService.startEmotionDetection(handleEmotionDetection);
       setIsInitialized(true);
@@ -235,7 +256,9 @@ export default function PracticeScreen() {
   };
 
   const cleanupServices = () => {
-    humeService.stopEmotionDetection();
+    if (humeService) {
+      humeService.stopEmotionDetection();
+    }
     if (currentRecording) {
       currentRecording.stopAndUnloadAsync();
       setCurrentRecording(null);
@@ -253,7 +276,7 @@ export default function PracticeScreen() {
     setCurrentScenario(scenario);
     
     // Find matching scenario script
-    const scenarioScript = Object.values(scenarios).find(s => 
+    const scenarioScript = Object.values(scenarioScripts).find(s => 
       s.title.toLowerCase().includes(scenario.title.toLowerCase().split(' ')[0])
     );
     
@@ -272,6 +295,8 @@ export default function PracticeScreen() {
   };
 
   const sendInitialMessage = async (scenario: ScenarioType) => {
+    if (!elevenLabsService) return;
+
     const initialMessages = {
       'Coffee Shop Approach': "Hi there! I couldn't help but notice you're reading. Mind if I ask what book that is?",
       'House Party Group Join': "Hey everyone! Mind if I join the conversation? I heard you talking about travel.",
@@ -302,6 +327,8 @@ export default function PracticeScreen() {
 
   const startRecording = async () => {
     try {
+      if (!whisperService) return;
+
       if (isRecording) {
         await stopRecording();
         return;
@@ -319,7 +346,7 @@ export default function PracticeScreen() {
 
   const stopRecording = async () => {
     try {
-      if (!currentRecording) return;
+      if (!currentRecording || !whisperService) return;
       
       setRecording(false);
       setProcessing(true);
@@ -356,7 +383,9 @@ export default function PracticeScreen() {
 
   const generateAIResponse = async (userInput: string) => {
     try {
-      const scenarioScript = Object.values(scenarios).find(s => 
+      if (!gptService || !elevenLabsService) return;
+
+      const scenarioScript = Object.values(scenarioScripts).find(s => 
         s.title.toLowerCase().includes(currentScenario?.title.toLowerCase().split(' ')[0] || '')
       );
       
@@ -420,6 +449,8 @@ export default function PracticeScreen() {
 
   const handleEndSession = async () => {
     try {
+      if (!gptService || !firebaseService) return;
+
       const sessionData = endSession();
       if (sessionData) {
         // Save session to Firebase
@@ -455,11 +486,25 @@ export default function PracticeScreen() {
 
   const playAudioMessage = async (audioUrl: string) => {
     try {
+      if (!elevenLabsService) return;
       await elevenLabsService.playAudio(audioUrl);
     } catch (error) {
       console.error('Audio playback error:', error);
     }
   };
+
+  // Show loading state while services are initializing
+  if (!servicesReady) {
+    return (
+      <LinearGradient
+        colors={['#0F0F19', '#1A1A2E', '#16213E']}
+        style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Initializing AI Services...</Text>
+        </View>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient
@@ -629,7 +674,6 @@ export default function PracticeScreen() {
           <Animated.View style={[styles.avatarContainer, avatarStyle]}>
             {/* Avatar Canvas */}
             <View style={styles.avatarCanvas}>
-              {/* This is the correct way to pass the imported image to the source prop */}
               <ImageBackground
                 source={currentScenario?.avatarUrl}
                 style={styles.avatarImageBackground}
@@ -689,7 +733,16 @@ export default function PracticeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 18,
+    color: '#FFF',
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,

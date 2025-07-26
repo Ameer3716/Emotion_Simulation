@@ -16,7 +16,7 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { User, Bot, Volume2 } from 'lucide-react-native';
-import { ConversationMessage } from '../types/conversation';
+import { ConversationMessage } from '@/types/conversation';
 
 const { width } = Dimensions.get('window');
 

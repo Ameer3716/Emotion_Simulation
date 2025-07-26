@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ConversationMessage, EmotionData, SessionData, ScenarioScript } from '../types/conversation';
+import { ConversationMessage, EmotionData, SessionData, ScenarioScript } from '@/types/conversation';
 
 interface ConversationState {
   // Current session state

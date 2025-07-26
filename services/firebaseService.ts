@@ -14,7 +14,7 @@ import {
   getDocs,
   Timestamp 
 } from 'firebase/firestore';
-import { SessionData, UserProfile, EmotionData } from '../types/conversation';
+import { SessionData, UserProfile, EmotionData } from '@/types/conversation';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,

@@ -17,7 +17,7 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Trophy, TrendingUp, Heart, Brain, Star, ArrowRight, CircleCheck as CheckCircle, CircleAlert as AlertCircle } from 'lucide-react-native';
-import { SessionData, EmotionData } from '../types/conversation';
+import { SessionData, EmotionData } from '@/types/conversation';
 
 const { width } = Dimensions.get('window');
 

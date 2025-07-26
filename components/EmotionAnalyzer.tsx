@@ -16,7 +16,7 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Brain, Heart, Zap, Eye } from 'lucide-react-native';
-import { EmotionData } from '../types/conversation';
+import { EmotionData } from '@/types/conversation';
 
 const { width } = Dimensions.get('window');
 

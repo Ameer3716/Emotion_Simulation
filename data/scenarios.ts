@@ -1,4 +1,4 @@
-import { ScenarioScript } from '../types/conversation';
+import { ScenarioScript } from '@/types/conversation';
 
 export const scenarios: Record<string, ScenarioScript> = {
   'coffee-shop': {

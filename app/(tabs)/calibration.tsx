@@ -203,15 +203,13 @@ export default function CalibrationScreen() {
                   {isRecording ? (
                     <Pause size={32} color="#FFF" />
                   ) : (
-                    // CHANGED: Replaced Mic with Camera icon
-                    <Camera size={32} color="#FFF" />
+                    <Mic size={32} color="#FFF" />
                   )}
                 </TouchableOpacity>
               </Animated.View>
 
               <Text style={styles.recordingStatus}>
-                {/* CHANGED: Replaced 'Tap to record' with 'Tap to snap' */}
-                {isRecording ? 'Recording...' : 'Tap to snap'}
+                {isRecording ? 'Recording...' : 'Tap to record'}
               </Text>
             </View>
           </BlurView>

@@ -1,4 +1,4 @@
-import { ConversationMessage, DialogueNode, ScenarioScript } from '../types/conversation';
+import { ConversationMessage, DialogueNode, ScenarioScript } from '@/types/conversation';
 
 export class GPTService {
   private static instance: GPTService;
